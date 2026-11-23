@@ -696,7 +696,7 @@ function renderAuthPage(kind) {
         <span class="how-badge">${isLogin ? 'Welcome back' : 'Join JobConnect'}</span>
         <h1>${isLogin ? 'Sign in and pick up where you left off' : 'Create your free JobConnect account'}</h1>
         <p class="lead">${isLogin
-          ? 'Your applications, saved roles and hiring pipeline are waiting for you.'
+          ? 'Your applications and hiring pipeline are waiting for you.'
           : 'One account for job seekers and employers — apply for roles, post vacancies and track every decision in one place.'}</p>
         <ul class="auth-points">
           <li><strong>Job seekers</strong><span>Search verified roles, apply in one click and follow every application.</span></li>
