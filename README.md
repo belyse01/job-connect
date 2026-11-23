@@ -26,7 +26,8 @@ locally in one command.
 
 - **Backend:** Node.js + Express 5, with the built-in `node:sqlite` database (no native modules).
 - **Frontend:** Plain HTML, CSS and JavaScript served by the same Express server (no build step).
-- **Auth:** scrypt password hashing, random bearer tokens stored in a `sessions` table.
+- **Auth:** scrypt password hashing, random bearer tokens stored only as SHA-256 digests in a `sessions` table,
+  one-hour password-reset tokens, and per-address rate limits on sign-in, registration and contact.
 - **Data:** SQLite file at `backend/data/jobconnect.db`, created and seeded automatically on first run.
 
 > `node:sqlite` requires Node.js **22.5+** (tested on Node 24).
@@ -99,7 +100,9 @@ All write endpoints expect JSON. Authenticated requests use `Authorization: Bear
 | --- | --- | --- | --- |
 | `GET` | `/api/stats` | public | Public counters shown on the home page (open jobs, companies, seekers, applications) |
 | `POST` | `/api/auth/register` | public | Create a seeker or employer account |
-| `POST` | `/api/auth/login` | public | Sign in, returns token + user |
+| `POST` | `/api/auth/login` | public | Sign in, returns token + user (rate limited) |
+| `POST` | `/api/auth/forgot-password` | public | Start a password reset; always answers 200 |
+| `POST` | `/api/auth/reset-password` | public | Set a new password from a reset token |
 | `POST` | `/api/auth/logout` | signed in | Revoke the current session |
 | `GET` | `/api/auth/me` | signed in | Current user |
 | `GET` | `/api/jobs` | public | Approved, open jobs; filters `q`, `location`, `type`, `category` |
@@ -126,6 +129,26 @@ All write endpoints expect JSON. Authenticated requests use `Authorization: Bear
 | `GET` | `/api/admin/jobs` | admin | All listings, including pending and rejected |
 | `PATCH` | `/api/admin/jobs/:id` | admin | Approve/reject (`{ moderation }`) or open/close (`{ status }`) a listing |
 | `DELETE` | `/api/admin/jobs/:id` | admin | Remove a listing |
+
+## Security and configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `4000` | HTTP port |
+| `NODE_ENV` | development | Set to `production` to hide development-only details such as reset tokens |
+| `JC_DATA_DIR` | `backend/data` | Where the SQLite database and uploaded CVs live |
+| `JC_RATE_LIMIT` | on | Set to `off` to disable rate limiting (used by the tests) |
+| `TRUST_PROXY` | off | Set when running behind a reverse proxy so rate limits use the real client IP |
+
+- Sign-in is limited to 10 attempts per 15 minutes per address and email, registration to 10 per hour
+  per address, and contact messages to 5 per hour per address. Limits are held in memory, so a
+  multi-instance deployment would need a shared store.
+- Session and reset tokens are only stored as SHA-256 hashes; password resets revoke every session
+  for that account.
+- **Email delivery is not wired up yet.** Password-reset links are written to the server log, and
+  outside production the API returns `devResetToken` so the flow works locally. Point
+  `sendPasswordResetEmail` in `backend/src/routes/auth.js` at a mail provider to finish it.
+- Email verification is not implemented for the same reason: it needs a mail provider.
 
 ## Notes and limitations
 

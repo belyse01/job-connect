@@ -21,4 +21,10 @@ function createToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
-module.exports = { hashPassword, verifyPassword, createToken };
+// Only a digest of each session and reset token is stored, so a leaked database
+// cannot be replayed as a valid credential.
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+module.exports = { hashPassword, verifyPassword, createToken, hashToken };

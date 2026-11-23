@@ -9,9 +9,13 @@ const path = require('node:path');
 // Point the database at a throwaway directory before anything loads db.js.
 process.env.JC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'jobconnect-test-'));
 process.env.NODE_ENV = 'test';
+// Keep the shared in-memory counters out of the way; one test enables them.
+process.env.JC_RATE_LIMIT = 'off';
 
 const app = require('../src/server');
 const db = require('../src/db');
+const { hashToken } = require('../src/security');
+const { resetRateLimits } = require('../src/rate-limit');
 
 const ADMIN = { email: 'admin@jobconnect.local', password: 'Admin123!' };
 
@@ -177,6 +181,89 @@ test('suspending an account revokes its session and blocks sign-in', async () =>
     body: { email: account.email, password: account.password },
   });
   assert.equal(blocked.status, 403);
+});
+
+test('session tokens are stored only as hashes', async () => {
+  const account = await register('seeker');
+  const session = await login(account.email, account.password);
+
+  const rows = db.prepare('SELECT token_hash FROM sessions WHERE user_id = ?').all(account.user.id);
+  assert.ok(rows.length > 0, 'session rows should exist');
+  assert.ok(
+    rows.every((row) => row.token_hash !== session.token),
+    'the raw token must never be stored'
+  );
+  assert.ok(
+    rows.some((row) => row.token_hash === hashToken(session.token)),
+    'the stored hash should match the issued token'
+  );
+});
+
+test('a password reset changes the password and ends existing sessions', async () => {
+  const account = await register('seeker');
+  const session = await login(account.email, account.password);
+
+  const forgotten = await request('/api/auth/forgot-password', {
+    method: 'POST',
+    body: { email: account.email },
+  });
+  assert.equal(forgotten.status, 200);
+  const token = forgotten.data.devResetToken;
+  assert.ok(token, 'development mode should return a reset token');
+
+  // Unknown addresses get the same answer and no token.
+  const unknown = await request('/api/auth/forgot-password', {
+    method: 'POST',
+    body: { email: 'nobody@example.com' },
+  });
+  assert.equal(unknown.status, 200);
+  assert.equal(unknown.data.devResetToken, undefined);
+
+  const reset = await request('/api/auth/reset-password', {
+    method: 'POST',
+    body: { token, password: 'BrandNewPass1!' },
+  });
+  assert.equal(reset.status, 200);
+
+  assert.equal((await request('/api/auth/me', { token: session.token })).status, 401);
+
+  const oldPassword = await request('/api/auth/login', {
+    method: 'POST',
+    body: { email: account.email, password: account.password },
+  });
+  assert.equal(oldPassword.status, 401);
+
+  const newPassword = await request('/api/auth/login', {
+    method: 'POST',
+    body: { email: account.email, password: 'BrandNewPass1!' },
+  });
+  assert.equal(newPassword.status, 200);
+
+  const reused = await request('/api/auth/reset-password', {
+    method: 'POST',
+    body: { token, password: 'AnotherPass1!' },
+  });
+  assert.equal(reused.status, 400);
+});
+
+test('repeated sign-in attempts are rate limited', async () => {
+  process.env.JC_RATE_LIMIT = 'on';
+  resetRateLimits();
+  try {
+    const email = 'rate-limit@example.com';
+    let last;
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      last = await request('/api/auth/login', {
+        method: 'POST',
+        body: { email, password: 'WrongPassword1!' },
+      });
+    }
+    assert.equal(last.status, 429);
+    assert.ok(last.data.error);
+  } finally {
+    process.env.JC_RATE_LIMIT = 'off';
+    resetRateLimits();
+  }
 });
 
 /* ------------------------------------------------------------------ */

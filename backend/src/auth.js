@@ -1,4 +1,5 @@
 const db = require('./db');
+const { hashToken } = require('./security');
 
 function publicUser(user) {
   if (!user) return null;
@@ -8,17 +9,18 @@ function publicUser(user) {
 
 function findSessionUser(token) {
   if (!token) return null;
+  const tokenHash = hashToken(token);
   const row = db
     .prepare(
       `SELECT u.*, s.expires_at
        FROM sessions s
        JOIN users u ON u.id = s.user_id
-       WHERE s.token = ?`
+       WHERE s.token_hash = ?`
     )
-    .get(token);
+    .get(tokenHash);
   if (!row) return null;
   if (new Date(`${row.expires_at}Z`).getTime() < Date.now()) {
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
     return null;
   }
   if (row.suspended) return null;

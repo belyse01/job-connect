@@ -12,6 +12,10 @@ const contactRoutes = require('./routes/contact');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Behind a reverse proxy every request shares one address; opt in to X-Forwarded-For
+// so rate limiting and logs see the real client.
+if (process.env.TRUST_PROXY) app.set('trust proxy', 1);
+
 // Clean up sessions that have already expired.
 db.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run();
 

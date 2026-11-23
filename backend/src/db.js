@@ -67,15 +67,24 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
-    token      TEXT PRIMARY KEY,
+    token_hash TEXT PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    used_at    TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_jobs_employer ON jobs(employer_id);
   CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id);
   CREATE INDEX IF NOT EXISTS idx_applications_seeker ON applications(seeker_id);
+  CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
 `);
 
 /* -------------------------------------------------------------------- */
@@ -91,6 +100,21 @@ if (!jobColumns.some((column) => column.name === 'requirements')) {
 if (!jobColumns.some((column) => column.name === 'moderation')) {
   // Any listing that was already live stays visible; only new posts need review.
   db.exec("ALTER TABLE jobs ADD COLUMN moderation TEXT NOT NULL DEFAULT 'approved'");
+}
+
+const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all();
+if (!sessionColumns.some((column) => column.name === 'token_hash')) {
+  // Tokens used to be stored verbatim. They cannot be rehashed in place, so
+  // drop the old table and let everyone sign in again.
+  db.exec('DROP TABLE sessions');
+  db.exec(`
+    CREATE TABLE sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    )
+  `);
 }
 
 const applicationsSql =

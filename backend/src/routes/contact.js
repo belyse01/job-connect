@@ -1,14 +1,18 @@
 const express = require('express');
 const db = require('../db');
+const { rateLimit } = require('../rate-limit');
 
 const router = express.Router();
+
+// Contact is public, so cap how many messages one address can send.
+const contactLimiter = rateLimit({ name: 'contact', max: 5, windowMs: 60 * 60 * 1000 });
 
 const SUBJECTS = ['General question', 'Job seeker support', 'Employers & hiring', 'Report a listing', 'Privacy request'];
 
 /**
  * POST /api/contact — store a message from the public contact page.
  */
-router.post('/', (req, res) => {
+router.post('/', contactLimiter, (req, res) => {
   const body = req.body || {};
   const name = String(body.name || '').trim();
   const email = String(body.email || '').trim().toLowerCase();

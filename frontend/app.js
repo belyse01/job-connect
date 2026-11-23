@@ -8,6 +8,8 @@ const state = {
   jobId: null,
   authMode: 'login',
   authError: '',
+  authNotice: '',
+  resetToken: '',
   jobSearch: { q: '', location: '', type: '', category: '' },
   userFilter: { role: '', q: '' },
   messageFilter: { q: '' },
@@ -339,7 +341,9 @@ function setView(view) {
 
 function authCard() {
   const mode = state.authMode;
-  const isRegister = mode !== 'login';
+  const isForgot = mode === 'forgot';
+  const isReset = mode === 'reset';
+  const isRegister = mode === 'register-seeker' || mode === 'register-employer';
   const isEmployer = mode === 'register-employer';
   return `
     <div class="panel auth-card" id="auth-card">
@@ -349,9 +353,38 @@ function authCard() {
           <button data-auth-mode="register-seeker" class="${mode === 'register-seeker' ? 'active' : ''}">Register as job seeker</button>
           <button data-auth-mode="register-employer" class="${mode === 'register-employer' ? 'active' : ''}">Register as employer</button>
         </div>
+        ${alertBox(state.authNotice, 'success')}
         ${alertBox(state.authError)}
         ${
-          isRegister
+          isForgot
+            ? `
+          <form data-form="auth-forgot">
+            <p class="auth-note">Enter the email address on your account and we will send a reset link.</p>
+            <div class="field">
+              <label for="forgot-email">Email address</label>
+              <input id="forgot-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+            </div>
+            <button class="btn btn-primary btn-block" type="submit">Send reset link</button>
+            <p class="muted small" style="margin-top:0.75rem"><button class="link-btn" type="button" data-auth-mode="login">Back to sign in</button></p>
+          </form>
+        `
+            : isReset
+              ? `
+          <form data-form="auth-reset">
+            <p class="auth-note">Choose a new password. Resetting signs you out everywhere else.</p>
+            <div class="field">
+              <label for="reset-token">Reset code</label>
+              <input id="reset-token" name="token" value="${esc(state.resetToken)}" required placeholder="Paste the code from your reset link" />
+            </div>
+            <div class="field">
+              <label for="reset-password">New password</label>
+              <input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters" />
+            </div>
+            <button class="btn btn-primary btn-block" type="submit">Save new password</button>
+            <p class="muted small" style="margin-top:0.75rem"><button class="link-btn" type="button" data-auth-mode="login">Back to sign in</button></p>
+          </form>
+        `
+              : isRegister
             ? `
           <form data-form="auth-register">
             <input type="hidden" name="role" value="${isEmployer ? 'employer' : 'seeker'}" />
@@ -394,10 +427,11 @@ function authCard() {
               <input id="login-password" name="password" type="password" autocomplete="current-password" required placeholder="Your password" />
             </div>
             <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+            <p class="muted small" style="margin-top:0.75rem"><button class="link-btn" type="button" data-auth-mode="forgot">Forgot your password?</button></p>
           </form>
         `
         }
-        <div class="demo-accounts">
+        <div class="demo-accounts" ${isForgot || isReset ? 'hidden' : ''}>
           <p>Demo accounts</p>
           <div class="demo-grid">
             <button class="demo-btn" data-demo="seeker"><strong>Job seeker</strong><span>seeker@jobconnect.local · Seeker123!</span></button>
@@ -685,19 +719,36 @@ async function renderPublic(ticket) {
 function renderAuthPage(kind) {
   const isLogin = kind === 'login';
   if (isLogin) {
-    state.authMode = 'login';
-  } else if (state.authMode === 'login') {
+    // The sign-in page also hosts the forgot/reset password steps.
+    if (!['login', 'forgot', 'reset'].includes(state.authMode)) state.authMode = 'login';
+  } else if (!['register-seeker', 'register-employer'].includes(state.authMode)) {
     state.authMode = 'register-seeker';
   }
+
+  const mode = state.authMode;
+  const isForgot = mode === 'forgot';
+  const isReset = mode === 'reset';
+  const heading = isForgot
+    ? 'Reset your password'
+    : isReset
+      ? 'Choose a new password'
+      : isLogin
+        ? 'Sign in and pick up where you left off'
+        : 'Create your free JobConnect account';
+  const lead = isForgot
+    ? 'Tell us the email on your account and we will send a link to set a new password.'
+    : isReset
+      ? 'Enter the reset code and pick a new password. Every other session will be signed out.'
+      : isLogin
+        ? 'Your applications and hiring pipeline are waiting for you.'
+        : 'One account for job seekers and employers — apply for roles, post vacancies and track every decision in one place.';
 
   appEl().innerHTML = `
     <div class="auth-page">
       <div class="auth-page-copy">
         <span class="how-badge">${isLogin ? 'Welcome back' : 'Join JobConnect'}</span>
-        <h1>${isLogin ? 'Sign in and pick up where you left off' : 'Create your free JobConnect account'}</h1>
-        <p class="lead">${isLogin
-          ? 'Your applications and hiring pipeline are waiting for you.'
-          : 'One account for job seekers and employers — apply for roles, post vacancies and track every decision in one place.'}</p>
+        <h1>${heading}</h1>
+        <p class="lead">${lead}</p>
         <ul class="auth-points">
           <li><strong>Job seekers</strong><span>Search verified roles, apply in one click and follow every application.</span></li>
           <li><strong>Employers</strong><span>Publish vacancies and review candidates from a single dashboard.</span></li>
@@ -2059,7 +2110,9 @@ document.addEventListener('click', async (event) => {
   if (el.dataset.authMode) {
     state.authMode = el.dataset.authMode;
     state.authError = '';
-    const targetPage = state.authMode === 'login' ? 'login' : 'register';
+    state.authNotice = '';
+    if (state.authMode === 'login') state.resetToken = '';
+    const targetPage = ['login', 'forgot', 'reset'].includes(state.authMode) ? 'login' : 'register';
     if (!state.user) {
       state.page = targetPage;
       state.jobId = null;
@@ -2333,6 +2386,42 @@ document.addEventListener('submit', async (event) => {
       return;
     }
 
+    if (kind === 'auth-forgot') {
+      const data = await api('/api/auth/forgot-password', {
+        method: 'POST',
+        body: { email: values.email },
+      });
+      state.authError = '';
+      state.page = 'login';
+      replaceHash('login');
+      if (data.devResetToken) {
+        // No mail provider in this environment, so continue straight to the reset step.
+        state.resetToken = data.devResetToken;
+        state.authNotice =
+          'Email delivery is not configured here, so your reset code has been filled in below.';
+        state.authMode = 'reset';
+      } else {
+        state.authNotice = 'If that email has an account, a reset link is on its way.';
+        state.authMode = 'login';
+      }
+      await render();
+      return;
+    }
+
+    if (kind === 'auth-reset') {
+      await api('/api/auth/reset-password', {
+        method: 'POST',
+        body: { token: values.token, password: values.password },
+      });
+      state.authMode = 'login';
+      state.authError = '';
+      state.authNotice = 'Password updated. Sign in with your new password.';
+      state.resetToken = '';
+      await render();
+      toast('Password updated.');
+      return;
+    }
+
     if (kind === 'hero-search') {
       state.jobSearch = {
         ...state.jobSearch,
@@ -2447,7 +2536,7 @@ document.addEventListener('submit', async (event) => {
       }
     }
   } catch (err) {
-    if (kind === 'auth-login' || kind === 'auth-register') {
+    if (kind === 'auth-login' || kind === 'auth-register' || kind === 'auth-forgot' || kind === 'auth-reset') {
       state.authError = err.message;
       render();
     } else if (kind === 'post-job') {
