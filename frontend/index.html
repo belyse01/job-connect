@@ -3,21 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>JobConnect — jobs from teams actually hiring</title>
+  <title>JobConnect — work worth showing up for</title>
   <meta name="description" content="JobConnect lists verified openings, keeps every application tracked, and gives employers one place to hire." />
-  <meta name="theme-color" content="#0b2a22" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d4ed8'/%3E%3Ctext x='32' y='43' font-family='Arial,Helvetica,sans-serif' font-size='26' font-weight='bold' fill='%23ffffff' text-anchor='middle'%3EJC%3C/text%3E%3C/svg%3E" />
+  <meta name="theme-color" content="#14160F" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2314160F'/%3E%3Ctext x='32' y='43' font-family='Georgia,serif' font-size='28' font-weight='bold' font-style='italic' fill='%23D8F25C' text-anchor='middle'%3EJC%3C/text%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <a class="skip-link" href="#app">Skip to main content</a>
   <header class="topbar">
     <div class="topbar-inner">
       <a class="brand" href="#" data-action="home">
         <span class="brand-mark">JC</span>
-        Job<span class="brand-accent">Connect</span>
+        <span class="brand-word">Job<span class="brand-accent">Connect</span></span>
       </a>
       <nav class="main-nav" id="main-nav" aria-label="Main navigation"></nav>
       <div class="account" id="account"></div>
@@ -43,6 +44,7 @@
         <h4>For job seekers</h4>
         <div class="footer-links">
           <button class="footer-link" data-route="jobs">Browse jobs</button>
+          <button class="footer-link" data-auth-mode="login">Sign in</button>
           <button class="footer-link" data-auth-mode="register-seeker">Create an account</button>
           <button class="footer-link" data-nav="applications">Track applications</button>
         </div>
@@ -59,7 +61,7 @@
         <h4>Company</h4>
         <div class="footer-links">
           <button class="footer-link" data-route="about">About us</button>
-          <button class="footer-link" data-info="contact">Contact</button>
+          <button class="footer-link" data-route="contact">Contact us</button>
           <button class="footer-link" data-info="privacy">Privacy policy</button>
           <button class="footer-link" data-route="companies">Companies</button>
           <button class="footer-link" data-route="about">How it works</button>

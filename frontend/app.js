@@ -5,6 +5,7 @@ const state = {
   user: null,
   view: 'home',
   page: 'home',
+  jobId: null,
   authMode: 'login',
   authError: '',
   jobSearch: { q: '', location: '', type: '', category: '' },
@@ -15,10 +16,14 @@ const state = {
 const ROLE_LABEL = { seeker: 'Job seeker', employer: 'Employer', admin: 'Administrator' };
 
 const PUBLIC_PAGES = {
-  home: 'JobConnect — jobs from teams actually hiring',
+  home: 'JobConnect — work worth showing up for',
   jobs: 'Find jobs — JobConnect',
+  job: 'Job details — JobConnect',
   companies: 'Companies hiring — JobConnect',
   about: 'About us — JobConnect',
+  contact: 'Contact us — JobConnect',
+  login: 'Sign in — JobConnect',
+  register: 'Create an account — JobConnect',
 };
 
 const appEl = () => document.getElementById('app');
@@ -53,8 +58,58 @@ function initials(name) {
     .join('');
 }
 
+function markTone(name) {
+  let hash = 0;
+  for (const char of String(name || '')) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return (hash % 5) + 1;
+}
+
+function companyMark(name, size = '') {
+  return `<span class="company-mark ${size} tone-${markTone(name)}" aria-hidden="true">${esc(initials(name))}</span>`;
+}
+
+const STATUS_LABEL = {
+  active: 'Active',
+  approved: 'Approved',
+  closed: 'Closed',
+  open: 'Open',
+  pending: 'Pending',
+  rejected: 'Rejected',
+  selected: 'Selected',
+  shortlisted: 'Shortlisted',
+  suspended: 'Suspended',
+};
+
 function badge(status) {
-  return `<span class="badge ${esc(status)}">${esc(status)}</span>`;
+  return `<span class="badge ${esc(status)}">${esc(STATUS_LABEL[status] || status)}</span>`;
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Could not read that file. Please try again.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function downloadCv(applicationId, filename) {
+  const res = await fetch(`/api/applications/${applicationId}/cv`, {
+    headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Could not download this CV.');
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename || 'cv';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function toast(message, type = 'success') {
@@ -147,14 +202,15 @@ function renderHeader() {
   if (!state.user) {
     nav.innerHTML = `
       <button class="nav-link ${state.page === 'home' ? 'active' : ''}" data-route="home">Home</button>
-      <button class="nav-link ${state.page === 'jobs' ? 'active' : ''}" data-route="jobs">Find Jobs</button>
+      <button class="nav-link ${state.page === 'jobs' || state.page === 'job' ? 'active' : ''}" data-route="jobs">Find Jobs</button>
       <button class="nav-link ${state.page === 'companies' ? 'active' : ''}" data-route="companies">Companies</button>
       <button class="nav-link ${state.page === 'about' ? 'active' : ''}" data-route="about">About Us</button>
+      <button class="nav-link ${state.page === 'contact' ? 'active' : ''}" data-route="contact">Contact Us</button>
+      <span class="nav-spacer" aria-hidden="true"></span>
+      <button class="btn btn-ghost btn-sm nav-auth" data-auth-mode="login">Login</button>
+      <button class="btn btn-primary btn-sm nav-auth" data-auth-mode="register-seeker">Register</button>
     `;
-    account.innerHTML = `
-      <button class="btn btn-ghost btn-sm" data-auth-mode="login">Login</button>
-      <button class="btn btn-primary btn-sm" data-auth-mode="register-seeker">Register</button>
-    `;
+    account.innerHTML = '';
     return;
   }
 
@@ -184,13 +240,19 @@ function renderHeader() {
 
 let renderTicket = 0;
 
-function pageFromHash() {
+function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '').split('?')[0].trim();
-  return raw in PUBLIC_PAGES ? raw : 'home';
+  const [head, second] = raw.split('/').filter(Boolean);
+  if (head === 'job' && second && /^\d+$/.test(second)) {
+    return { page: 'job', jobId: Number(second) };
+  }
+  return { page: head in PUBLIC_PAGES ? head : 'home', jobId: null };
 }
 
-function hashFor(page) {
-  return page === 'home' ? '#/' : `#/${page}`;
+function hashFor(page, jobId) {
+  if (page === 'home') return '#/';
+  if (page === 'job') return `#/job/${jobId}`;
+  return `#/${page}`;
 }
 
 function replaceHash(page) {
@@ -198,18 +260,27 @@ function replaceHash(page) {
   if (location.hash !== hash) history.replaceState(null, '', hash);
 }
 
-function go(page) {
+function go(page, { jobId = null } = {}) {
   const next = page in PUBLIC_PAGES ? page : 'home';
   if (state.user) {
+    if (next === 'login' || next === 'register') {
+      setView(defaultView(state.user.role));
+      return;
+    }
+    if (next === 'job' && jobId) {
+      openJobPage(jobId);
+      return;
+    }
     const canBrowseJobs = state.user.role === 'seeker' && next === 'jobs';
     setView(canBrowseJobs ? 'jobs' : defaultView(state.user.role));
-    if (!canBrowseJobs) toast('The public pages are visible when you sign out.');
+    if (!canBrowseJobs) toast('The rest of the public pages are visible when you sign out.');
     return;
   }
 
-  const hash = hashFor(next);
+  const hash = hashFor(next, jobId);
   if (location.hash === hash) {
     state.page = next;
+    state.jobId = jobId;
     closeModal();
     render();
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -220,9 +291,10 @@ function go(page) {
 
 window.addEventListener('hashchange', () => {
   if (state.user) return;
-  const page = pageFromHash();
-  if (page === state.page) return;
+  const { page, jobId } = parseHash();
+  if (page === state.page && jobId === state.jobId) return;
   state.page = page;
+  state.jobId = jobId;
   closeModal();
   render();
   window.scrollTo({ top: 0, behavior: 'auto' });
@@ -363,7 +435,29 @@ function categoryCards(categories) {
     .join('');
 }
 
-function companyCards(jobs) {
+function companyTicker(jobs) {
+  const names = [...new Set((jobs || []).map((job) => job.company))];
+  if (!names.length) return '';
+  const item = (name, hidden = false) => `
+      <span class="ticker-item"${hidden ? ' aria-hidden="true"' : ''}>
+        ${companyMark(name, 'sm')}
+        <span>${esc(name)}</span>
+        <span class="ticker-arrow" aria-hidden="true">↗</span>
+      </span>`;
+  const items = names.map((name) => item(name)).join('');
+  const staticTicker = names.length === 1;
+  return `
+    <div class="company-ticker${staticTicker ? ' company-ticker-static' : ''}" aria-label="Companies hiring now">
+      <span class="ticker-label"><span class="live-dot" aria-hidden="true"></span>Hiring now</span>
+      <div class="ticker-viewport">
+        <div class="ticker-track">${items}</div>
+        ${staticTicker ? '' : `<div class="ticker-track" aria-hidden="true">${names.map((name) => item(name, true)).join('')}</div>`}
+      </div>
+      ${staticTicker ? '<button class="ticker-more" data-route="companies">All companies →</button>' : ''}
+    </div>`;
+}
+
+function companyCards(jobs, { limit = 0 } = {}) {
   const map = new Map();
   for (const job of jobs) {
     const entry = map.get(job.company) || {
@@ -371,32 +465,44 @@ function companyCards(jobs) {
       roles: 0,
       locations: new Set(),
       categories: new Set(),
+      titles: [],
     };
     entry.roles += 1;
     entry.locations.add(job.location);
     entry.categories.add(job.category);
+    if (entry.titles.length < 3 && !entry.titles.includes(job.title)) entry.titles.push(job.title);
     map.set(job.company, entry);
   }
 
-  return [...map.values()]
-    .sort((a, b) => b.roles - a.roles || a.name.localeCompare(b.name))
-    .map(
-      (company) => `
+  const companies = [...map.values()].sort(
+    (a, b) => b.roles - a.roles || a.name.localeCompare(b.name)
+  );
+  const shown = limit > 0 ? companies.slice(0, limit) : companies;
+
+  return shown
+    .map((company) => {
+      const locations = [...company.locations];
+      const locationText = locations.slice(0, 2).join(' · ');
+      const moreLocations = locations.length > 2 ? ` +${locations.length - 2} more` : '';
+      return `
       <article class="company-card">
         <div class="company-card-head">
-          <span class="company-mark lg" aria-hidden="true">${esc(initials(company.name))}</span>
+          ${companyMark(company.name, 'lg')}
           <div>
             <h3>${esc(company.name)}</h3>
             <p class="muted small">${esc([...company.categories].slice(0, 2).join(' · '))}</p>
           </div>
         </div>
-        <p class="muted small company-locations">📍 ${esc([...company.locations].join(', '))}</p>
+        <p class="muted small company-locations">📍 ${esc(locationText)}${esc(moreLocations)}</p>
+        <ul class="company-roles">
+          ${company.titles.map((title) => `<li>${esc(title)}</li>`).join('')}
+        </ul>
         <div class="company-card-foot">
           <span class="tag blue">${company.roles} open role${company.roles === 1 ? '' : 's'}</span>
-          <button class="btn btn-secondary btn-sm" data-search-q="${esc(company.name)}">View jobs</button>
+          <button class="btn btn-secondary btn-sm" data-search-q="${esc(company.name)}">View jobs →</button>
         </div>
-      </article>`
-    )
+      </article>`;
+    })
     .join('');
 }
 
@@ -443,8 +549,8 @@ function howItWorks() {
         <ol class="steps">
           <li><span class="step-num">1</span><div><strong>Create a free account</strong><p>Tell us who you are — it takes less than a minute.</p></div></li>
           <li><span class="step-num">2</span><div><strong>Search and filter roles</strong><p>Narrow by keyword, location, job type and category.</p></div></li>
-          <li><span class="step-num">3</span><div><strong>Apply with a cover letter</strong><p>One click to apply, and every application is saved.</p></div></li>
-          <li><span class="step-num">4</span><div><strong>Track every decision</strong><p>Follow your status: pending, reviewed, accepted or rejected.</p></div></li>
+          <li><span class="step-num">3</span><div><strong>Apply with your CV</strong><p>Attach your CV, add a cover letter and submit once.</p></div></li>
+          <li><span class="step-num">4</span><div><strong>Track every decision</strong><p>Follow your status: pending, shortlisted, selected or rejected.</p></div></li>
         </ol>
         <button class="btn btn-primary" data-auth-mode="register-seeker">Start as a job seeker</button>
       </div>
@@ -453,12 +559,47 @@ function howItWorks() {
         <h3>Post once, review every candidate</h3>
         <ol class="steps">
           <li><span class="step-num">1</span><div><strong>Register your company</strong><p>Create an employer account under your company name.</p></div></li>
-          <li><span class="step-num">2</span><div><strong>Publish a vacancy</strong><p>Add the role, location, type, salary and description.</p></div></li>
-          <li><span class="step-num">3</span><div><strong>Review applicants</strong><p>Read cover letters and mark candidates reviewed.</p></div></li>
-          <li><span class="step-num">4</span><div><strong>Accept or reject</strong><p>Close the role when it is filled — everything stays organised.</p></div></li>
+          <li><span class="step-num">2</span><div><strong>Publish a vacancy</strong><p>Add the title, salary, location, description and requirements.</p></div></li>
+          <li><span class="step-num">3</span><div><strong>Administrator review</strong><p>An admin approves the vacancy before it goes live to job seekers.</p></div></li>
+          <li><span class="step-num">4</span><div><strong>Review and decide</strong><p>Read CVs and cover letters, then shortlist, select or reject.</p></div></li>
         </ol>
         <button class="btn btn-light" data-auth-mode="register-employer">Post your first job</button>
       </div>
+    </div>`;
+}
+
+function applicationJourney() {
+  const stages = [
+    ['01', 'Applied', 'Your CV and details land with the hiring team.', 'pending'],
+    ['02', 'Shortlisted', 'The company moves you into its shortlist.', 'shortlisted'],
+    ['03', 'Selected', 'You get the offer and the decision is final.', 'selected'],
+    ['04', 'Rejected', 'A clear answer, so you can move on quickly.', 'rejected'],
+  ];
+  return `
+    <div class="journey-panel">
+      <div class="journey-head">
+        <div>
+          <span class="section-kicker">Application journey</span>
+          <h2>No more applying into the void</h2>
+          <p>Every application has a visible status from the moment you send it to the final decision.</p>
+        </div>
+        <span class="journey-stamp" aria-hidden="true">Tracked<br /><em>end to end</em></span>
+      </div>
+      <ol class="journey-track">
+        ${stages
+          .map(
+            ([num, title, copy, status]) => `
+          <li class="journey-step">
+            <span class="journey-num">${num}</span>
+            <div class="journey-body">
+              <span class="badge ${status}">${esc(STATUS_LABEL[status])}</span>
+              <strong>${esc(title)}</strong>
+              <p>${esc(copy)}</p>
+            </div>
+          </li>`
+          )
+          .join('')}
+      </ol>
     </div>`;
 }
 
@@ -500,7 +641,8 @@ function faqList() {
     ['Is JobConnect free for job seekers?', 'Yes. Creating a seeker account, searching jobs and applying are all free.'],
     ['Do I need an account to browse jobs?', 'You can browse and read every listing without signing in. A free account is only needed to apply and to track your applications.'],
     ['Can I apply to the same job twice?', 'No. Each role accepts one application per candidate, so take a moment on your cover letter before submitting.'],
-    ['How do employers see my application?', 'Employers see your name, email, cover letter and the date you applied, and they can mark the application reviewed, accepted or rejected.'],
+    ['How do employers see my application?', 'Employers see your name, email, CV, cover letter and the date you applied, and they can mark the application shortlisted, selected or rejected.'],
+    ['When does a job appear on the board?', 'Every vacancy is reviewed by an administrator first. Approved jobs go live immediately; rejected ones stay hidden from job seekers.'],
     ['What does the salary field mean?', 'Employers may share a salary range or leave it blank. When it is left blank, the listing says “Salary not disclosed”.'],
   ];
   return items
@@ -530,9 +672,42 @@ function jobSearchParams() {
 
 async function renderPublic(ticket) {
   if (state.page === 'jobs') return renderJobsPage(ticket);
+  if (state.page === 'job') return renderJobDetailPage(ticket);
   if (state.page === 'companies') return renderCompaniesPage(ticket);
   if (state.page === 'about') return renderAboutPage(ticket);
+  if (state.page === 'contact') return renderContactPage();
+  if (state.page === 'login' || state.page === 'register') return renderAuthPage(state.page);
   return renderLanding(ticket);
+}
+
+function renderAuthPage(kind) {
+  const isLogin = kind === 'login';
+  if (isLogin) {
+    state.authMode = 'login';
+  } else if (state.authMode === 'login') {
+    state.authMode = 'register-seeker';
+  }
+
+  appEl().innerHTML = `
+    <div class="auth-page">
+      <div class="auth-page-copy">
+        <span class="how-badge">${isLogin ? 'Welcome back' : 'Join JobConnect'}</span>
+        <h1>${isLogin ? 'Sign in and pick up where you left off' : 'Create your free JobConnect account'}</h1>
+        <p class="lead">${isLogin
+          ? 'Your applications, saved roles and hiring pipeline are waiting for you.'
+          : 'One account for job seekers and employers — apply for roles, post vacancies and track every decision in one place.'}</p>
+        <ul class="auth-points">
+          <li><strong>Job seekers</strong><span>Search verified roles, apply in one click and follow every application.</span></li>
+          <li><strong>Employers</strong><span>Publish vacancies and review candidates from a single dashboard.</span></li>
+          <li><strong>No fees</strong><span>Creating an account is free, and no credit card is required.</span></li>
+        </ul>
+        <p class="muted small">${isLogin
+          ? 'New here? <button class="link-btn" data-auth-mode="register-seeker">Create a job seeker account</button> or <button class="link-btn" data-auth-mode="register-employer">register as an employer</button>.'
+          : 'Already registered? <button class="link-btn" data-auth-mode="login">Sign in instead</button>.'}</p>
+      </div>
+      ${authCard()}
+    </div>
+  `;
 }
 
 function ctaBand() {
@@ -547,6 +722,75 @@ function ctaBand() {
         <button class="btn btn-outline-light" data-auth-mode="register-employer">Post a vacancy</button>
       </div>
     </section>`;
+}
+
+function renderContactPage() {
+  appEl().innerHTML = `
+    <div class="stack">
+      <section class="page-hero">
+        <span class="eyebrow">Contact us</span>
+        <h1>Talk to the JobConnect team</h1>
+        <p class="lead">Questions about a listing, your account or hiring? Send us a message and a real person will get back to you.</p>
+      </section>
+
+      <div class="contact-grid">
+        <form class="panel" data-form="contact">
+          <div class="panel-body">
+            <h2>Send us a message</h2>
+            <p class="muted small">We reply to every message within one business day.</p>
+            <div class="form-alert"></div>
+            <div class="grid-2">
+              <div class="field">
+                <label for="contact-name">Full name</label>
+                <input id="contact-name" name="name" autocomplete="name" required placeholder="Your full name" />
+              </div>
+              <div class="field">
+                <label for="contact-email">Email address</label>
+                <input id="contact-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="contact-subject">Topic</label>
+              <select id="contact-subject" name="subject">
+                <option>General question</option>
+                <option>Job seeker support</option>
+                <option>Employers &amp; hiring</option>
+                <option>Report a listing</option>
+                <option>Privacy request</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="contact-message">Message</label>
+              <textarea id="contact-message" name="message" required minlength="20" placeholder="How can we help?"></textarea>
+              <span class="hint">At least 20 characters. Include the email on your account if you have one.</span>
+            </div>
+            <button class="btn btn-primary" type="submit">Send message</button>
+          </div>
+        </form>
+
+        <aside class="contact-side">
+          <div class="panel">
+            <div class="panel-body">
+              <h3>Direct contacts</h3>
+              <ul class="contact-list">
+                <li><strong>Job seeker support</strong><a href="mailto:support@jobconnect.local">support@jobconnect.local</a></li>
+                <li><strong>Employers &amp; hiring</strong><a href="mailto:employers@jobconnect.local">employers@jobconnect.local</a></li>
+                <li><strong>Phone</strong><span>+1 (555) 010-2040 · Mon–Fri, 9:00–17:00</span></li>
+                <li><strong>Office</strong><span>24 Market Street, Suite 400</span></li>
+              </ul>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-body">
+              <h3>Reporting a listing</h3>
+              <p class="small muted">If a role looks misleading, expired or duplicated, send us the link and job title. Administrators review reports and can close or remove the listing.</p>
+              <p class="small muted" style="margin-bottom:0">Choose “Report a listing” in the form so it reaches the moderation queue first.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  `;
 }
 
 async function renderJobsPage(ticket) {
@@ -668,6 +912,7 @@ async function renderAboutPage(ticket) {
       <section id="how-it-works">
         <div class="section-title">
           <div>
+            <span class="section-kicker">Process</span>
             <h2>How JobConnect works</h2>
             <p class="muted small">One platform, two very different days made easier.</p>
           </div>
@@ -704,10 +949,11 @@ async function renderLanding(ticket) {
   appEl().innerHTML = `
     <div class="stack landing">
       <section class="landing-hero">
+        <span class="hero-ghost" aria-hidden="true">HIRE</span>
         <div class="hero-copy">
-          <span class="eyebrow">Verified openings · Updated daily</span>
-          <h1>Find work you'll love.<br /><span class="hero-accent">Hire people who deliver.</span></h1>
-          <p class="lead">JobConnect brings job seekers, employers and administrators into one organised marketplace — open roles in one place and every application tracked from first click to final decision.</p>
+          <span class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>No ghost jobs · No fees · Updated daily</span>
+          <h1>Work worth<br /><em class="hero-accent">showing up for.</em></h1>
+          <p class="lead">Verified roles from real teams, one clean application, and a status you can follow from first click to final decision. Hiring? Find people who deliver.</p>
           <form class="hero-search" data-form="hero-search">
             <div class="hero-search-field">
               <span aria-hidden="true">⌕</span>
@@ -726,32 +972,67 @@ async function renderLanding(ticket) {
             <button class="chip" data-search-q="Data">Data</button>
             <button class="chip" data-search-q="Design">Design</button>
           </div>
-          <ul class="hero-stats">
-            <li><strong>${stats.jobs}</strong><span>open roles</span></li>
-            <li><strong>${stats.companies}</strong><span>companies hiring</span></li>
-            <li><strong>${stats.seekers}</strong><span>job seekers</span></li>
-            <li><strong>${stats.applications}</strong><span>applications sent</span></li>
+          <ul class="hero-proof">
+            <li>Free for job seekers</li>
+            <li>Every listing verified</li>
+            <li>Applications you can track</li>
           </ul>
         </div>
-        ${authCard()}
+        <div class="hero-side">
+          <div class="hero-auth">
+            <div class="hero-auth-head">
+              <span class="hero-auth-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>Your account</span>
+            </div>
+            ${authCard()}
+          </div>
+          <div class="hero-sticker" aria-hidden="true">
+            <span class="hero-sticker-star">✳</span>
+            <strong>${stats.jobs}</strong>
+            <span>role${stats.jobs === 1 ? '' : 's'} live right now</span>
+          </div>
+        </div>
       </section>
 
-      <section class="feature-grid">
-        <article class="feature-card">
-          <span class="feature-icon blue" aria-hidden="true">🔍</span>
-          <h3>Search that respects your time</h3>
-          <p>Filter by keyword, location, job type and category. Results update instantly, and every listing shows who is hiring and what it pays.</p>
-        </article>
-        <article class="feature-card">
-          <span class="feature-icon green" aria-hidden="true">📋</span>
-          <h3>No application black holes</h3>
-          <p>Every application is stored with its status — pending, reviewed, accepted or rejected — so you always know where you stand.</p>
-        </article>
-        <article class="feature-card">
-          <span class="feature-icon amber" aria-hidden="true">🛡️</span>
-          <h3>A marketplace with a referee</h3>
-          <p>Administrators review accounts and listings, suspend bad actors and keep closed or misleading jobs off the board.</p>
-        </article>
+      <div class="hero-statbar">
+        <div class="hero-statbar-item"><strong>${stats.jobs}</strong><span>Open roles</span></div>
+        <div class="hero-statbar-item"><strong>${stats.companies}</strong><span>Companies hiring</span></div>
+        <div class="hero-statbar-item"><strong>${stats.seekers}</strong><span>Job seekers</span></div>
+        <div class="hero-statbar-item"><strong>${stats.applications}</strong><span>Applications sent</span></div>
+      </div>
+
+      ${companyTicker(data.jobs)}
+
+      <section>
+        <div class="section-title">
+          <div>
+            <span class="section-kicker">Why JobConnect</span>
+            <h2>A job board that shows its receipts</h2>
+            <p class="muted small">Built for people who are tired of guessing.</p>
+          </div>
+        </div>
+        <div class="feature-grid bento">
+          <article class="feature-card tint-ink">
+            <span class="feature-icon" aria-hidden="true">🔍</span>
+            <h3>Search that respects your time</h3>
+            <p>Filter by keyword, location, job type and category. Results update instantly, and every listing shows who is hiring and what it pays.</p>
+          </article>
+          <article class="feature-card tint-lime">
+            <span class="feature-icon" aria-hidden="true">📋</span>
+            <h3>No application black holes</h3>
+            <p>Every application is stored with its status — pending, shortlisted, selected or rejected — so you always know where you stand.</p>
+          </article>
+          <article class="feature-card tint-coral">
+            <span class="feature-icon" aria-hidden="true">🛡️</span>
+            <h3>A marketplace with a referee</h3>
+            <p>Administrators review accounts and listings, suspend bad actors and keep closed or misleading jobs off the board.</p>
+          </article>
+          <article class="feature-card tint-paper">
+            <span class="feature-icon" aria-hidden="true">💸</span>
+            <h3>Pay before you apply</h3>
+            <p>Salary and location sit on the card, not buried in paragraph nine. You decide what is worth your time before writing a word.</p>
+          </article>
+        </div>
       </section>
 
       ${
@@ -759,6 +1040,7 @@ async function renderLanding(ticket) {
           ? `<section>
               <div class="section-title">
                 <div>
+                  <span class="section-kicker">Explore by field</span>
                   <h2>Browse by category</h2>
                   <p class="muted small">Pick a field to jump straight to matching roles.</p>
                 </div>
@@ -772,6 +1054,7 @@ async function renderLanding(ticket) {
       <section id="latest-jobs">
         <div class="section-title">
           <div>
+            <span class="section-kicker">Open right now</span>
             <h2>Latest opportunities</h2>
             <p class="muted small">${data.jobs.length} open job${data.jobs.length === 1 ? '' : 's'}${hasFilters ? ' match your search' : ' right now'}</p>
           </div>
@@ -784,9 +1067,26 @@ async function renderLanding(ticket) {
         ${data.jobs.length > featured.length ? `<p class="muted small more-note">Showing ${featured.length} of ${data.jobs.length} roles on this page — <button class="link-btn" data-route="jobs">see all open jobs</button>.</p>` : ''}
       </section>
 
+      ${
+        data.jobs.length
+          ? `<section class="companies-section" id="companies-hiring">
+              <div class="section-title">
+                <div>
+                  <span class="section-kicker">Employers</span>
+                  <h2>Companies hiring now</h2>
+                  <p class="muted small">Verified employers with live vacancies — see who is hiring before you apply.</p>
+                </div>
+                <button class="btn btn-secondary btn-sm" data-route="companies">All companies</button>
+              </div>
+              <div class="company-grid">${companyCards(data.jobs, { limit: 6 })}</div>
+            </section>`
+          : ''
+      }
+
       <section>
         <div class="section-title">
           <div>
+            <span class="section-kicker">Process</span>
             <h2>How JobConnect works</h2>
             <p class="muted small">One platform, two very different days made easier.</p>
           </div>
@@ -794,9 +1094,14 @@ async function renderLanding(ticket) {
         ${howItWorks()}
       </section>
 
+      <section>${applicationJourney()}</section>
+
       <section>
         <div class="section-title">
-          <h2>Loved by both sides of the table</h2>
+          <div>
+            <span class="section-kicker">Voices</span>
+            <h2>Loved by both sides of the table</h2>
+          </div>
         </div>
         <div class="quote-grid">${testimonials()}</div>
       </section>
@@ -805,7 +1110,10 @@ async function renderLanding(ticket) {
 
       <section>
         <div class="section-title">
-          <h2>Questions, answered</h2>
+          <div>
+            <span class="section-kicker">FAQ</span>
+            <h2>Questions, answered</h2>
+          </div>
         </div>
         <div class="faq">${faqList()}</div>
       </section>
@@ -855,7 +1163,7 @@ function jobCard(job) {
   return `
     <article class="job-card">
       <div class="job-card-head">
-        <span class="company-mark" aria-hidden="true">${esc(initials(job.company))}</span>
+        ${companyMark(job.company)}
         <div class="job-card-title">
           <h3>${esc(job.title)}</h3>
           <div class="company">${esc(job.company)}</div>
@@ -883,6 +1191,7 @@ function jobCard(job) {
 /* ------------------------------------------------------------------ */
 
 async function renderSeeker(ticket) {
+  if (state.view === 'job-detail') return renderJobDetailPage(ticket);
   if (state.view === 'applications') return renderSeekerApplications(ticket);
 
   const params = new URLSearchParams(
@@ -977,9 +1286,10 @@ async function renderEmployerOverview(ticket) {
 
       <div class="stats-grid">
         <div class="stat"><div class="label">Open jobs</div><div class="value accent">${stats.openJobs}</div></div>
+        <div class="stat"><div class="label">Awaiting approval</div><div class="value">${stats.pendingModeration}</div></div>
         <div class="stat"><div class="label">Applications</div><div class="value">${stats.applications}</div></div>
-        <div class="stat"><div class="label">Awaiting review</div><div class="value">${stats.pending}</div></div>
-        <div class="stat"><div class="label">Accepted</div><div class="value">${stats.accepted}</div></div>
+        <div class="stat"><div class="label">Shortlisted</div><div class="value">${stats.shortlisted}</div></div>
+        <div class="stat"><div class="label">Selected</div><div class="value">${stats.selected}</div></div>
       </div>
 
       <div class="panel">
@@ -1000,14 +1310,22 @@ async function renderEmployerOverview(ticket) {
                           <td><strong>${esc(job.title)}</strong><span class="sub">${esc(job.type)} · ${esc(job.category)}</span></td>
                           <td>${esc(job.location)}</td>
                           <td>${job.application_count}${job.pending_count ? `<span class="sub">${job.pending_count} new</span>` : ''}</td>
-                          <td>${badge(job.status)}</td>
+                          <td>
+                            ${badge(job.moderation)}${job.moderation === 'approved' ? ` ${badge(job.status)}` : ''}
+                            ${job.moderation === 'pending' ? '<span class="sub">Not visible to seekers yet</span>' : ''}
+                            ${job.moderation === 'rejected' ? '<span class="sub">Fix and repost this role</span>' : ''}
+                          </td>
                           <td class="nowrap">${fmtDate(job.created_at)}</td>
                           <td>
                             <div class="actions">
                               <button class="btn btn-secondary btn-sm" data-job-applicants="${job.id}">Applications</button>
-                              <button class="btn btn-secondary btn-sm" data-toggle-job="${job.id}" data-status="${job.status}">
-                                ${job.status === 'open' ? 'Close' : 'Reopen'}
-                              </button>
+                              ${
+                                job.moderation === 'approved'
+                                  ? `<button class="btn btn-secondary btn-sm" data-toggle-job="${job.id}" data-status="${job.status}">
+                                      ${job.status === 'open' ? 'Close' : 'Reopen'}
+                                    </button>`
+                                  : ''
+                              }
                               <button class="btn btn-danger btn-sm" data-delete-job="${job.id}">Delete</button>
                             </div>
                           </td>
@@ -1034,7 +1352,7 @@ async function renderPostJob(ticket) {
       <div class="page-head">
         <div>
           <h1>Post a job</h1>
-          <p>Tell candidates what the role involves. You can edit or close it at any time.</p>
+          <p>Tell candidates what the role involves. An administrator reviews every vacancy before it goes live.</p>
         </div>
         <button class="btn btn-secondary" data-nav="employer-overview">Back to overview</button>
       </div>
@@ -1082,10 +1400,15 @@ async function renderPostJob(ticket) {
             </div>
             <div class="field">
               <label for="job-description">Description</label>
-              <textarea id="job-description" name="description" required minlength="20" placeholder="Responsibilities, requirements and what makes this role great…"></textarea>
+              <textarea id="job-description" name="description" required minlength="20" placeholder="Responsibilities and what makes this role great…"></textarea>
               <span class="hint">At least 20 characters.</span>
             </div>
-            <button class="btn btn-primary" type="submit">Publish job</button>
+            <div class="field">
+              <label for="job-requirements">Requirements</label>
+              <textarea id="job-requirements" name="requirements" required minlength="10" placeholder="Qualifications, skills and experience the candidate needs…"></textarea>
+              <span class="hint">At least 10 characters. Job seekers see this on the listing.</span>
+            </div>
+            <button class="btn btn-primary" type="submit">Submit for review</button>
           </form>
         </div>
       </div>
@@ -1120,7 +1443,7 @@ async function renderEmployerApplications(ticket) {
           ${
             applications.length
               ? `<table>
-                  <thead><tr><th>Candidate</th><th>Job</th><th>Applied</th><th>Status</th><th class="actions">Decision</th></tr></thead>
+                  <thead><tr><th>Candidate</th><th>Job</th><th>Applied</th><th>CV</th><th>Status</th><th class="actions">Decision</th></tr></thead>
                   <tbody>
                     ${applications
                       .map(
@@ -1129,11 +1452,17 @@ async function renderEmployerApplications(ticket) {
                           <td><strong>${esc(a.seeker_name)}</strong><span class="sub">${esc(a.seeker_email)}</span></td>
                           <td>${esc(a.job_title || filteredJobTitle || '')}</td>
                           <td class="nowrap">${fmtDate(a.created_at)}</td>
+                          <td>
+                            <div class="actions">
+                              ${a.cv_path ? `<button class="btn btn-secondary btn-sm" data-download-cv="${a.id}" data-cv-name="${esc(a.cv_name || 'cv')}">Download</button>` : '<span class="muted small">None</span>'}
+                              <button class="btn btn-ghost btn-sm" data-view-application="${a.id}">View</button>
+                            </div>
+                          </td>
                           <td>${badge(a.status)}</td>
                           <td>
                             <div class="actions">
-                              <button class="btn btn-secondary btn-sm" data-set-status="reviewed" data-application="${a.id}" ${a.status === 'reviewed' ? 'disabled' : ''}>Reviewed</button>
-                              <button class="btn btn-primary btn-sm" data-set-status="accepted" data-application="${a.id}" ${a.status === 'accepted' ? 'disabled' : ''}>Accept</button>
+                              <button class="btn btn-secondary btn-sm" data-set-status="shortlisted" data-application="${a.id}" ${a.status === 'shortlisted' ? 'disabled' : ''}>Shortlist</button>
+                              <button class="btn btn-primary btn-sm" data-set-status="selected" data-application="${a.id}" ${a.status === 'selected' ? 'disabled' : ''}>Select</button>
                               <button class="btn btn-danger btn-sm" data-set-status="rejected" data-application="${a.id}" ${a.status === 'rejected' ? 'disabled' : ''}>Reject</button>
                             </div>
                           </td>
@@ -1170,17 +1499,21 @@ async function renderAdminOverview(ticket) {
       <div class="page-head">
         <div>
           <h1>Administrator console</h1>
-          <p>Monitor the marketplace and keep accounts and listings in order.</p>
+          <p>Review submitted vacancies, monitor the marketplace and keep accounts in order.</p>
         </div>
-        <button class="btn btn-secondary" data-nav="admin-users">Manage users</button>
+        <div class="actions">
+          <button class="btn btn-primary" data-nav="admin-jobs">Review jobs${s.pendingJobs ? ` (${s.pendingJobs})` : ''}</button>
+          <button class="btn btn-secondary" data-nav="admin-users">Manage users</button>
+        </div>
       </div>
 
       <div class="stats-grid">
         <div class="stat"><div class="label">Job seekers</div><div class="value">${s.seekers}</div></div>
         <div class="stat"><div class="label">Employers</div><div class="value">${s.employers}</div></div>
-        <div class="stat"><div class="label">Open jobs</div><div class="value accent">${s.openJobs}</div></div>
+        <div class="stat"><div class="label">Jobs awaiting approval</div><div class="value accent">${s.pendingJobs}</div></div>
+        <div class="stat"><div class="label">Open jobs</div><div class="value">${s.openJobs}</div></div>
         <div class="stat"><div class="label">Applications</div><div class="value">${s.applications}</div></div>
-        <div class="stat"><div class="label">Awaiting review</div><div class="value">${s.pendingApplications}</div></div>
+        <div class="stat"><div class="label">Pending decisions</div><div class="value">${s.pendingApplications}</div></div>
         <div class="stat"><div class="label">Suspended accounts</div><div class="value">${s.suspendedUsers}</div></div>
       </div>
 
@@ -1303,7 +1636,7 @@ async function renderAdminJobs(ticket) {
       <div class="page-head">
         <div>
           <h1>Job listings</h1>
-          <p>Close misleading listings or remove them from the platform.</p>
+          <p>Approve or reject submitted vacancies, close misleading listings, or remove them.</p>
         </div>
         <button class="btn btn-secondary" data-nav="admin-overview">Back to overview</button>
       </div>
@@ -1312,7 +1645,7 @@ async function renderAdminJobs(ticket) {
           ${
             data.jobs.length
               ? `<table>
-                  <thead><tr><th>Role</th><th>Employer</th><th>Applicants</th><th>Status</th><th>Posted</th><th class="actions">Actions</th></tr></thead>
+                  <thead><tr><th>Role</th><th>Employer</th><th>Applicants</th><th>Moderation</th><th>Visibility</th><th>Posted</th><th class="actions">Actions</th></tr></thead>
                   <tbody>
                     ${data.jobs
                       .map(
@@ -1321,13 +1654,22 @@ async function renderAdminJobs(ticket) {
                           <td><strong>${esc(job.title)}</strong><span class="sub">${esc(job.location)} · ${esc(job.type)}</span></td>
                           <td>${esc(job.company)}<span class="sub">${esc(job.employer_email)}</span></td>
                           <td>${job.application_count}</td>
-                          <td>${badge(job.status)}</td>
+                          <td>${badge(job.moderation)}</td>
+                          <td>${job.moderation === 'approved' ? badge(job.status) : '<span class="muted small">Hidden from seekers</span>'}</td>
                           <td class="nowrap">${fmtDate(job.created_at)}</td>
                           <td>
                             <div class="actions">
-                              <button class="btn btn-secondary btn-sm" data-admin-toggle-job="${job.id}" data-status="${job.status}">
-                                ${job.status === 'open' ? 'Close' : 'Reopen'}
-                              </button>
+                              ${
+                                job.moderation === 'pending'
+                                  ? `<button class="btn btn-primary btn-sm" data-admin-moderate="approved" data-job-id="${job.id}">Approve</button>
+                                     <button class="btn btn-danger btn-sm" data-admin-moderate="rejected" data-job-id="${job.id}">Reject</button>`
+                                  : job.moderation === 'rejected'
+                                    ? `<button class="btn btn-primary btn-sm" data-admin-moderate="approved" data-job-id="${job.id}">Approve</button>`
+                                    : `<button class="btn btn-secondary btn-sm" data-admin-moderate="rejected" data-job-id="${job.id}">Reject</button>
+                                       <button class="btn btn-secondary btn-sm" data-admin-toggle-job="${job.id}" data-status="${job.status}">
+                                         ${job.status === 'open' ? 'Close' : 'Reopen'}
+                                       </button>`
+                              }
                               <button class="btn btn-danger btn-sm" data-admin-delete-job="${job.id}">Delete</button>
                             </div>
                           </td>
@@ -1374,7 +1716,7 @@ const INFO_PAGES = {
       <h3>What we collect</h3>
       <ul class="contact-list">
         <li><strong>Account details</strong><span>Your name, email address, password hash and — for employers — your company name.</span></li>
-        <li><strong>Activity</strong><span>Jobs you post, applications you send, cover letters and the status history of each application.</span></li>
+        <li><strong>Activity</strong><span>Jobs you post, applications you send, CVs, cover letters and the status history of each application.</span></li>
       </ul>
       <h3>How we use it</h3>
       <p>Account details are used to sign you in and to show your name to the other side of an application. Application content is visible to the employer who owns the job and to platform administrators for moderation.</p>
@@ -1404,64 +1746,186 @@ function openInfoModal(kind) {
     </div>`;
 }
 
-async function openJobModal(jobId) {
+async function openApplicationModal(applicationId) {
+  let application;
   try {
-    const { job, hasApplied } = await api(`/api/jobs/${jobId}`);
-    const user = state.user;
+    ({ application } = await api(`/api/applications/${applicationId}`));
+  } catch (err) {
+    toast(err.message, 'error');
+    return;
+  }
 
-    let applyArea = '';
-    if (!user) {
-      applyArea = `
-        <div class="apply-box">
-          <p class="small muted">Sign in as a job seeker to apply for this role.</p>
-          <button class="btn btn-primary" data-action="go-home-auth">Sign in to apply</button>
-        </div>`;
-    } else if (user.role === 'seeker') {
-      applyArea = hasApplied
-        ? `<div class="apply-box"><div class="alert success" style="margin:0">You have already applied to this job. Track it under “My applications”.</div></div>`
-        : `
-        <div class="apply-box">
-          <h3>Apply for this job</h3>
-          <form data-form="apply" data-job-id="${job.id}">
-            <div class="field">
-              <label for="cover-letter">Cover letter (optional)</label>
-              <textarea id="cover-letter" name="cover_letter" placeholder="Tell the employer why you are a great fit…"></textarea>
-            </div>
-            <div class="modal-alert"></div>
-            <button class="btn btn-primary" type="submit">Submit application</button>
-          </form>
-        </div>`;
-    } else {
-      applyArea = `<div class="apply-box"><p class="small muted">Only job seekers can apply for roles. You are signed in as ${esc(ROLE_LABEL[user.role] || user.role)}.</p></div>`;
-    }
-
-    modalEl().innerHTML = `
-      <div class="modal-backdrop" data-backdrop="1">
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="job-modal-title">
-          <div class="modal-head">
-            <div>
-              <h2 id="job-modal-title">${esc(job.title)}</h2>
-              <div class="muted small">${esc(job.company)} · ${esc(job.location)}</div>
-            </div>
-            <button class="modal-close" data-action="close-modal" aria-label="Close">×</button>
+  modalEl().innerHTML = `
+    <div class="modal-backdrop" data-backdrop="1">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="application-modal-title">
+        <div class="modal-head">
+          <div>
+            <h2 id="application-modal-title">${esc(application.seeker_name)}</h2>
+            <div class="muted small">${esc(application.seeker_email)} · applied ${fmtDate(application.created_at)}</div>
           </div>
-          <div class="modal-body">
+          <button class="modal-close" data-action="close-modal" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <dl class="detail-facts">
+            <div><dt>Job</dt><dd>${esc(application.job_title)}</dd></div>
+            <div><dt>Company</dt><dd>${esc(application.company)}</dd></div>
+            <div><dt>Location</dt><dd>${esc(application.location)}</dd></div>
+            <div><dt>Status</dt><dd>${badge(application.status)}</dd></div>
+          </dl>
+          <h3>Cover letter</h3>
+          <p class="small muted">${application.cover_letter ? esc(application.cover_letter) : 'No cover letter submitted.'}</p>
+          <div class="apply-actions">
+            ${
+              application.cv_path
+                ? `<button class="btn btn-secondary" data-download-cv="${application.id}" data-cv-name="${esc(application.cv_name || 'cv')}">Download CV</button>`
+                : '<span class="muted small">No CV attached.</span>'
+            }
+            <button class="btn btn-secondary" data-set-status="shortlisted" data-application="${application.id}" ${application.status === 'shortlisted' ? 'disabled' : ''}>Shortlist</button>
+            <button class="btn btn-primary" data-set-status="selected" data-application="${application.id}" ${application.status === 'selected' ? 'disabled' : ''}>Select</button>
+            <button class="btn btn-danger" data-set-status="rejected" data-application="${application.id}" ${application.status === 'rejected' ? 'disabled' : ''}>Reject</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openJobPage(jobId) {
+  const id = Number(jobId);
+  if (!id) return;
+  closeModal();
+
+  if (state.user) {
+    if (state.user.role !== 'seeker') {
+      toast('Job details are available to job seekers and signed-out visitors.');
+      return;
+    }
+    state.jobId = id;
+    state.view = 'job-detail';
+    render();
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    return;
+  }
+
+  go('job', { jobId: id });
+  window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+function jobApplyArea(job, hasApplied) {
+  const user = state.user;
+
+  if (!user) {
+    return `
+      <div class="apply-box">
+        <h3>Apply for this role</h3>
+        <p class="small muted">Create a free job seeker account, or sign in, to apply and track this application.</p>
+        <div class="apply-actions">
+          <button class="btn btn-primary" data-auth-mode="register-seeker">Create an account</button>
+          <button class="btn btn-secondary" data-auth-mode="login">Sign in</button>
+        </div>
+      </div>`;
+  }
+
+  if (user.role !== 'seeker') {
+    return `<div class="apply-box"><p class="small muted" style="margin:0">Only job seekers can apply for roles. You are signed in as ${esc(ROLE_LABEL[user.role] || user.role)}.</p></div>`;
+  }
+
+  if (hasApplied) {
+    return `<div class="apply-box"><div class="alert success" style="margin:0">You have already applied to this job. Track it under <button class="link-btn" data-nav="applications">My applications</button>.</div></div>`;
+  }
+
+  return `
+    <div class="apply-box">
+      <h3>Apply for this job</h3>
+      <form data-form="apply" data-job-id="${job.id}">
+        <div class="field">
+          <label for="apply-cv">CV</label>
+          <input id="apply-cv" name="cv" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required />
+          <span class="hint">PDF, DOC or DOCX · up to 2 MB.</span>
+        </div>
+        <div class="field">
+          <label for="cover-letter">Cover letter (optional)</label>
+          <textarea id="cover-letter" name="cover_letter" placeholder="Tell the employer why you are a great fit…"></textarea>
+        </div>
+        <div class="form-alert"></div>
+        <button class="btn btn-primary btn-block" type="submit">Submit application</button>
+      </form>
+    </div>`;
+}
+
+async function renderJobDetailPage(ticket) {
+  const jobId = Number(state.jobId);
+  if (!jobId) return go('jobs');
+
+  let payload;
+  try {
+    payload = await api(`/api/jobs/${jobId}`);
+  } catch (err) {
+    if (ticket !== renderTicket) return;
+    document.title = PUBLIC_PAGES.job;
+    appEl().innerHTML = `
+      <div class="stack">
+        <button class="link-btn back-link" data-route="jobs">← Back to all jobs</button>
+        <div class="panel"><div class="panel-body">
+          ${emptyState('This job is no longer available', err.message)}
+        </div></div>
+      </div>`;
+    return;
+  }
+
+  if (ticket !== renderTicket) return;
+  const { job, hasApplied } = payload;
+  document.title = `${job.title} at ${job.company} — JobConnect`;
+
+  appEl().innerHTML = `
+    <div class="stack">
+      <button class="link-btn back-link" data-route="jobs">← Back to all jobs</button>
+
+      <section class="job-detail">
+        <article class="panel">
+          <div class="panel-body">
+            <div class="job-detail-head">
+              ${companyMark(job.company, 'lg')}
+              <div>
+                <h1>${esc(job.title)}</h1>
+                <p class="muted" style="margin:0">${esc(job.company)} · 📍 ${esc(job.location)}</p>
+              </div>
+            </div>
+
             <div class="job-meta">
               <span class="tag blue">${esc(job.type)}</span>
               <span class="tag">${esc(job.category)}</span>
               <span class="tag">${job.salary ? esc(job.salary) : 'Salary not disclosed'}</span>
               <span class="tag">Posted ${fmtDate(job.created_at)}</span>
             </div>
+
+            <h2>About the role</h2>
             <div class="description">${esc(job.description)}</div>
-            <p class="small muted">Posted by ${esc(job.employer_name)} (${esc(job.employer_email)})</p>
-            ${applyArea}
+
+            <h2>Requirements</h2>
+            <div class="description">${esc(job.requirements || 'Requirements will be shared by the employer.')}</div>
+
+            <h2>Posted by</h2>
+            <p class="small muted" style="margin:0">${esc(job.employer_name)} · ${esc(job.employer_email)}</p>
           </div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+        </article>
+
+        <aside class="job-detail-side">
+          <div class="panel">
+            <div class="panel-body">
+              <h3>Role summary</h3>
+              <dl class="detail-facts">
+                <div><dt>Salary</dt><dd>${job.salary ? esc(job.salary) : 'Not disclosed'}</dd></div>
+                <div><dt>Job type</dt><dd>${esc(job.type)}</dd></div>
+                <div><dt>Category</dt><dd>${esc(job.category)}</dd></div>
+                <div><dt>Location</dt><dd>${esc(job.location)}</dd></div>
+              </dl>
+              ${jobApplyArea(job, hasApplied)}
+            </div>
+          </div>
+        </aside>
+      </section>
+    </div>
+  `;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1477,7 +1941,7 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
-  const el = target.closest('[data-nav], [data-route], [data-action], [data-demo], [data-auth-mode], [data-job], [data-toggle-job], [data-delete-job], [data-job-applicants], [data-set-status], [data-toggle-user], [data-delete-user], [data-admin-toggle-job], [data-admin-delete-job], [data-search-q], [data-category-filter], [data-info]');
+  const el = target.closest('[data-nav], [data-route], [data-action], [data-demo], [data-auth-mode], [data-job], [data-toggle-job], [data-delete-job], [data-job-applicants], [data-set-status], [data-view-application], [data-download-cv], [data-toggle-user], [data-delete-user], [data-admin-toggle-job], [data-admin-moderate], [data-admin-delete-job], [data-search-q], [data-category-filter], [data-info]');
   if (!el) return;
 
   if (el.tagName === 'A') event.preventDefault();
@@ -1494,14 +1958,15 @@ document.addEventListener('click', async (event) => {
   if (el.dataset.authMode) {
     state.authMode = el.dataset.authMode;
     state.authError = '';
-    if (!state.user && state.page !== 'home') {
-      state.page = 'home';
-      replaceHash('home');
+    const targetPage = state.authMode === 'login' ? 'login' : 'register';
+    if (!state.user) {
+      state.page = targetPage;
+      state.jobId = null;
+      replaceHash(targetPage);
     }
     await render();
     if (!state.user) {
       window.scrollTo({ top: 0, behavior: 'auto' });
-      document.getElementById('auth-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       document.querySelector('#auth-card input:not([type="hidden"])')?.focus({ preventScroll: true });
     }
     return;
@@ -1537,6 +2002,9 @@ document.addEventListener('click', async (event) => {
     clearSession();
     state.view = 'home';
     state.authMode = 'login';
+    state.page = 'home';
+    state.jobId = null;
+    replaceHash('home');
     render();
     return;
   }
@@ -1547,10 +2015,9 @@ document.addEventListener('click', async (event) => {
   if (action === 'go-home-auth') {
     closeModal();
     if (state.user) return setView('home');
-    state.page = 'home';
-    replaceHash('home');
+    state.page = 'login';
+    replaceHash('login');
     await render();
-    document.getElementById('auth-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
   if (action === 'home') {
@@ -1576,7 +2043,7 @@ document.addEventListener('click', async (event) => {
     return go('jobs');
   }
 
-  if (el.dataset.job) return openJobModal(el.dataset.job);
+  if (el.dataset.job) return openJobPage(el.dataset.job);
 
   if (el.dataset.jobApplicants) {
     state.employerJobFilter = Number(el.dataset.jobApplicants);
@@ -1614,13 +2081,28 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  if (el.dataset.viewApplication) {
+    await openApplicationModal(el.dataset.viewApplication);
+    return;
+  }
+
+  if (el.dataset.downloadCv) {
+    try {
+      await downloadCv(el.dataset.downloadCv, el.dataset.cvName);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+    return;
+  }
+
   if (el.dataset.setStatus) {
     try {
       await api(`/api/applications/${el.dataset.application}`, {
         method: 'PATCH',
         body: { status: el.dataset.setStatus },
       });
-      toast(`Application marked as ${el.dataset.setStatus}.`);
+      toast(`Application marked as ${STATUS_LABEL[el.dataset.setStatus] || el.dataset.setStatus}.`);
+      closeModal();
       render();
     } catch (err) {
       toast(err.message, 'error');
@@ -1649,6 +2131,19 @@ document.addEventListener('click', async (event) => {
     try {
       await api(`/api/admin/users/${el.dataset.deleteUser}`, { method: 'DELETE' });
       toast('User deleted.');
+      render();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+    return;
+  }
+
+  if (el.dataset.adminModerate) {
+    const moderation = el.dataset.adminModerate;
+    if (moderation === 'rejected' && !confirm('Reject this vacancy? It will stay hidden from job seekers.')) return;
+    try {
+      await api(`/api/admin/jobs/${el.dataset.jobId}`, { method: 'PATCH', body: { moderation } });
+      toast(moderation === 'approved' ? 'Job approved and live.' : 'Job rejected.');
       render();
     } catch (err) {
       toast(err.message, 'error');
@@ -1756,32 +2251,75 @@ document.addEventListener('submit', async (event) => {
           category: values.category || 'General',
           salary: values.salary,
           description: values.description,
+          requirements: values.requirements,
         },
       });
       state.view = 'employer-overview';
       render();
-      toast('Job published.');
+      toast('Job submitted. An administrator will review it shortly.');
       return;
     }
 
     if (kind === 'apply') {
       const jobId = form.dataset.jobId;
-      const alertSlot = form.querySelector('.modal-alert');
+      const alertSlot = form.querySelector('.form-alert');
       const button = form.querySelector('button[type="submit"]');
+      const file = form.querySelector('input[type="file"]')?.files?.[0];
+      if (!file) {
+        if (alertSlot) alertSlot.innerHTML = alertBox('Please attach your CV before submitting.');
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        if (alertSlot) alertSlot.innerHTML = alertBox('Your CV must be 2 MB or smaller.');
+        return;
+      }
       button.disabled = true;
       button.textContent = 'Submitting…';
       try {
+        const cv = {
+          name: file.name,
+          type: file.type,
+          data: await readFileAsBase64(file),
+        };
         await api('/api/applications', {
           method: 'POST',
-          body: { job_id: Number(jobId), cover_letter: values.cover_letter || '' },
+          body: { job_id: Number(jobId), cover_letter: values.cover_letter || '', cv },
         });
-        closeModal();
+        await render();
         toast('Application submitted. Good luck!');
-        render();
       } catch (err) {
         if (alertSlot) alertSlot.innerHTML = alertBox(err.message);
         button.disabled = false;
         button.textContent = 'Submit application';
+      }
+    }
+
+    if (kind === 'contact') {
+      const alertSlot = form.querySelector('.form-alert');
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      button.textContent = 'Sending…';
+      try {
+        await api('/api/contact', {
+          method: 'POST',
+          body: {
+            name: values.name,
+            email: values.email,
+            subject: values.subject,
+            message: values.message,
+          },
+        });
+        form.reset();
+        if (alertSlot) {
+          alertSlot.innerHTML = alertBox(
+            'Thanks — your message is with the team. We reply within one business day.',
+            'success'
+          );
+        }
+        toast('Message sent.');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Send message';
       }
     }
   } catch (err) {
@@ -1801,7 +2339,9 @@ document.addEventListener('submit', async (event) => {
 /* ------------------------------------------------------------------ */
 
 async function boot() {
-  state.page = pageFromHash();
+  const { page, jobId } = parseHash();
+  state.page = page;
+  state.jobId = jobId;
   if (state.token) {
     try {
       const data = await api('/api/auth/me');

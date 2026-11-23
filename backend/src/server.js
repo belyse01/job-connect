@@ -7,6 +7,7 @@ const jobRoutes = require('./routes/jobs');
 const applicationRoutes = require('./routes/applications');
 const employerRoutes = require('./routes/employer');
 const adminRoutes = require('./routes/admin');
+const contactRoutes = require('./routes/contact');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -14,7 +15,9 @@ const PORT = process.env.PORT || 4000;
 // Clean up sessions that have already expired.
 db.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run();
 
-app.use(express.json({ limit: '100kb' }));
+// Application submissions include a base64-encoded CV, so allow a little more
+// than the 2 MB file limit plus the rest of the JSON payload.
+app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'jobconnect-api' });
@@ -25,8 +28,8 @@ app.get('/api/stats', (_req, res) => {
   const count = (sql) => db.prepare(sql).get().count;
   res.json({
     stats: {
-      jobs: count("SELECT COUNT(*) AS count FROM jobs WHERE status = 'open'"),
-      companies: count('SELECT COUNT(DISTINCT company) AS count FROM jobs'),
+      jobs: count("SELECT COUNT(*) AS count FROM jobs WHERE status = 'open' AND moderation = 'approved'"),
+      companies: count("SELECT COUNT(DISTINCT company) AS count FROM jobs WHERE moderation = 'approved'"),
       employers: count("SELECT COUNT(*) AS count FROM users WHERE role = 'employer' AND suspended = 0"),
       seekers: count("SELECT COUNT(*) AS count FROM users WHERE role = 'seeker' AND suspended = 0"),
       applications: count('SELECT COUNT(*) AS count FROM applications'),
@@ -39,6 +42,7 @@ app.use('/api/jobs', jobRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/employer', employerRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/contact', contactRoutes);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'API route not found.' });

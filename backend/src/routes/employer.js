@@ -26,7 +26,8 @@ router.get('/overview', (req, res) => {
       `SELECT
          COUNT(*) AS applications,
          COALESCE(SUM(CASE WHEN a.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending,
-         COALESCE(SUM(CASE WHEN a.status = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted
+         COALESCE(SUM(CASE WHEN a.status = 'shortlisted' THEN 1 ELSE 0 END), 0) AS shortlisted,
+         COALESCE(SUM(CASE WHEN a.status = 'selected' THEN 1 ELSE 0 END), 0) AS selected
        FROM applications a JOIN jobs j ON j.id = a.job_id
        WHERE j.employer_id = ?`
     )
@@ -35,11 +36,13 @@ router.get('/overview', (req, res) => {
   res.json({
     jobs,
     stats: {
-      openJobs: jobs.filter((job) => job.status === 'open').length,
+      openJobs: jobs.filter((job) => job.status === 'open' && job.moderation === 'approved').length,
       totalJobs: jobs.length,
+      pendingModeration: jobs.filter((job) => job.moderation === 'pending').length,
       applications: totals.applications,
       pending: totals.pending,
-      accepted: totals.accepted,
+      shortlisted: totals.shortlisted,
+      selected: totals.selected,
     },
   });
 });

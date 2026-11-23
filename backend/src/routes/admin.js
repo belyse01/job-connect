@@ -13,8 +13,10 @@ router.get('/stats', (_req, res) => {
     seekers: count("SELECT COUNT(*) AS count FROM users WHERE role = 'seeker'"),
     employers: count("SELECT COUNT(*) AS count FROM users WHERE role = 'employer'"),
     suspendedUsers: count('SELECT COUNT(*) AS count FROM users WHERE suspended = 1'),
-    openJobs: count("SELECT COUNT(*) AS count FROM jobs WHERE status = 'open'"),
+    pendingJobs: count("SELECT COUNT(*) AS count FROM jobs WHERE moderation = 'pending'"),
+    openJobs: count("SELECT COUNT(*) AS count FROM jobs WHERE status = 'open' AND moderation = 'approved'"),
     closedJobs: count("SELECT COUNT(*) AS count FROM jobs WHERE status = 'closed'"),
+    rejectedJobs: count("SELECT COUNT(*) AS count FROM jobs WHERE moderation = 'rejected'"),
     applications: count('SELECT COUNT(*) AS count FROM applications'),
     pendingApplications: count("SELECT COUNT(*) AS count FROM applications WHERE status = 'pending'"),
   };
@@ -109,13 +111,32 @@ router.get('/jobs', (_req, res) => {
   res.json({ jobs });
 });
 
+/**
+ * PATCH /api/admin/jobs/:id — approve or reject a submitted vacancy, or
+ * open/close a listing that is already approved.
+ */
 router.patch('/jobs/:id', (req, res) => {
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found.' });
+
+  const moderation = req.body?.moderation;
   const status = req.body?.status;
+
+  if (moderation !== undefined) {
+    if (!['approved', 'rejected'].includes(moderation)) {
+      return res.status(400).json({ error: 'Moderation must be either "approved" or "rejected".' });
+    }
+    db.prepare('UPDATE jobs SET moderation = ? WHERE id = ?').run(moderation, job.id);
+    return res.json({ ok: true, moderation });
+  }
+
   if (!['open', 'closed'].includes(status)) {
     return res.status(400).json({ error: 'Status must be either "open" or "closed".' });
   }
-  const result = db.prepare('UPDATE jobs SET status = ? WHERE id = ?').run(status, req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Job not found.' });
+  if (status === 'open' && job.moderation !== 'approved') {
+    return res.status(400).json({ error: 'Approve this job before opening it.' });
+  }
+  db.prepare('UPDATE jobs SET status = ? WHERE id = ?').run(status, job.id);
   res.json({ ok: true, status });
 });
 

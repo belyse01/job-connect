@@ -4,7 +4,7 @@ const { optionalAuth, requireAuth, requireRole } = require('../auth');
 
 const router = express.Router();
 
-const JOB_FIELDS = ['title', 'location', 'type', 'category', 'salary', 'description'];
+const JOB_FIELDS = ['title', 'location', 'type', 'category', 'salary', 'description', 'requirements'];
 
 function readJobPayload(body) {
   const payload = {};
@@ -18,6 +18,8 @@ function validateJob(payload) {
   if (payload.title.length < 3) return 'Job title must be at least 3 characters.';
   if (payload.location.length < 2) return 'Please provide a job location.';
   if (payload.description.length < 20) return 'Description must be at least 20 characters.';
+  if (payload.requirements.length < 10) return 'Requirements must be at least 10 characters.';
+  if (payload.salary.length > 80) return 'Salary must be 80 characters or fewer.';
   return null;
 }
 
@@ -33,7 +35,7 @@ function jobDetail(id) {
 
 /**
  * GET /api/jobs?q=&location=&type=&category=
- * Public list of open jobs with basic search.
+ * Public list of open, administrator-approved jobs with basic search.
  */
 router.get('/', (req, res) => {
   const q = String(req.query.q || '').trim();
@@ -41,7 +43,7 @@ router.get('/', (req, res) => {
   const type = String(req.query.type || '').trim();
   const category = String(req.query.category || '').trim();
 
-  const where = ["j.status = 'open'", 'u.suspended = 0'];
+  const where = ["j.status = 'open'", "j.moderation = 'approved'", 'u.suspended = 0'];
   const params = [];
 
   if (q) {
@@ -83,6 +85,12 @@ router.get('/:id', optionalAuth, (req, res) => {
   const job = jobDetail(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
 
+  const canSeeUnapproved =
+    req.user && (req.user.role === 'admin' || req.user.id === job.employer_id);
+  if (job.moderation !== 'approved' && !canSeeUnapproved) {
+    return res.status(404).json({ error: 'This job is awaiting review or was not approved.' });
+  }
+
   let hasApplied = false;
   if (req.user && req.user.role === 'seeker') {
     hasApplied = Boolean(
@@ -96,7 +104,8 @@ router.get('/:id', optionalAuth, (req, res) => {
 });
 
 /**
- * POST /api/jobs — employer creates a vacancy.
+ * POST /api/jobs — employer creates a vacancy. It stays pending until an
+ * administrator approves it, so it is not visible to job seekers yet.
  */
 router.post('/', requireAuth, requireRole('employer'), (req, res) => {
   const payload = readJobPayload(req.body);
@@ -105,8 +114,8 @@ router.post('/', requireAuth, requireRole('employer'), (req, res) => {
 
   const result = db
     .prepare(
-      `INSERT INTO jobs (employer_id, title, company, location, type, category, salary, description)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO jobs (employer_id, title, company, location, type, category, salary, description, requirements, moderation, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'open')`
     )
     .run(
       req.user.id,
@@ -116,7 +125,8 @@ router.post('/', requireAuth, requireRole('employer'), (req, res) => {
       payload.type || 'Full-time',
       payload.category || 'General',
       payload.salary,
-      payload.description
+      payload.description,
+      payload.requirements
     );
 
   res.status(201).json({ job: jobDetail(result.lastInsertRowid) });
@@ -144,9 +154,13 @@ router.patch('/:id', requireAuth, requireRole('employer', 'admin'), (req, res) =
     status = req.body.status;
   }
 
+  // Employer edits go back into the review queue so an approved listing can
+  // never be changed into something an administrator has not seen.
+  const moderation = req.user.role === 'admin' ? job.moderation : 'pending';
+
   db.prepare(
     `UPDATE jobs
-     SET title = ?, location = ?, type = ?, category = ?, salary = ?, description = ?, status = ?
+     SET title = ?, location = ?, type = ?, category = ?, salary = ?, description = ?, requirements = ?, moderation = ?, status = ?
      WHERE id = ?`
   ).run(
     payload.title,
@@ -155,6 +169,8 @@ router.patch('/:id', requireAuth, requireRole('employer', 'admin'), (req, res) =
     payload.category || 'General',
     payload.salary,
     payload.description,
+    payload.requirements,
+    moderation,
     status,
     job.id
   );
@@ -174,6 +190,9 @@ router.patch('/:id/status', requireAuth, requireRole('employer', 'admin'), (req,
   const status = req.body?.status;
   if (!['open', 'closed'].includes(status)) {
     return res.status(400).json({ error: 'Status must be either "open" or "closed".' });
+  }
+  if (status === 'open' && job.moderation !== 'approved') {
+    return res.status(400).json({ error: 'This job is still awaiting administrator approval.' });
   }
   db.prepare('UPDATE jobs SET status = ? WHERE id = ?').run(status, job.id);
   res.json({ job: jobDetail(job.id) });
