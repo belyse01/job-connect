@@ -10,7 +10,7 @@ locally in one command.
 | --- | --- |
 | **Job seeker** (`seeker`) | Register, search and filter approved jobs, read job details, apply with a CV and cover letter, track application status. |
 | **Employer** (`employer`) | Register a company, submit vacancies with salary, location and requirements, close/delete listings, review candidates and CVs, mark applications as shortlisted, selected or rejected. |
-| **Administrator** (`admin`) | Review submitted vacancies and approve or reject them, platform stats, search and filter users, suspend/reactivate or delete accounts, close or remove listings. |
+| **Administrator** (`admin`) | Review submitted vacancies and approve or reject them, platform stats, search and filter users, suspend/reactivate or delete accounts, close or remove listings, and read contact messages. |
 
 ## How a hire flows
 
@@ -109,6 +109,9 @@ All write endpoints expect JSON. Authenticated requests use `Authorization: Bear
 | `GET` | `/api/admin/users` | admin | Users; filters `role`, `q` |
 | `PATCH` | `/api/admin/users/:id` | admin | Suspend/reactivate a user |
 | `DELETE` | `/api/admin/users/:id` | admin | Delete a user and their data |
+| `GET` | `/api/admin/messages` | admin | Contact-form messages; filter `q` |
+| `GET` | `/api/admin/messages/:id` | admin | One contact message in full |
+| `DELETE` | `/api/admin/messages/:id` | admin | Delete a handled contact message |
 | `GET` | `/api/admin/jobs` | admin | All listings, including pending and rejected |
 | `PATCH` | `/api/admin/jobs/:id` | admin | Approve/reject (`{ moderation }`) or open/close (`{ status }`) a listing |
 | `DELETE` | `/api/admin/jobs/:id` | admin | Remove a listing |

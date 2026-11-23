@@ -19,6 +19,7 @@ router.get('/stats', (_req, res) => {
     rejectedJobs: count("SELECT COUNT(*) AS count FROM jobs WHERE moderation = 'rejected'"),
     applications: count('SELECT COUNT(*) AS count FROM applications'),
     pendingApplications: count("SELECT COUNT(*) AS count FROM applications WHERE status = 'pending'"),
+    contactMessages: count('SELECT COUNT(*) AS count FROM contact_messages'),
   };
 
   const recentApplications = db
@@ -138,6 +139,49 @@ router.patch('/jobs/:id', (req, res) => {
   }
   db.prepare('UPDATE jobs SET status = ? WHERE id = ?').run(status, job.id);
   res.json({ ok: true, status });
+});
+
+/**
+ * GET /api/admin/messages?q= — messages sent through the public contact form.
+ */
+router.get('/messages', (req, res) => {
+  const q = String(req.query.q || '').trim();
+
+  const where = [];
+  const params = [];
+  if (q) {
+    where.push('(m.name LIKE ? OR m.email LIKE ? OR m.subject LIKE ? OR m.message LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const messages = db
+    .prepare(
+      `SELECT m.* FROM contact_messages m
+       ${clause}
+       ORDER BY m.created_at DESC, m.id DESC`
+    )
+    .all(...params);
+
+  res.json({ messages, total: messages.length });
+});
+
+/**
+ * GET /api/admin/messages/:id — one contact message in full.
+ */
+router.get('/messages/:id', (req, res) => {
+  const message = db.prepare('SELECT * FROM contact_messages WHERE id = ?').get(req.params.id);
+  if (!message) return res.status(404).json({ error: 'Message not found.' });
+  res.json({ message });
+});
+
+/**
+ * DELETE /api/admin/messages/:id — remove a message that has been handled.
+ */
+router.delete('/messages/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM contact_messages WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Message not found.' });
+  res.json({ ok: true });
 });
 
 router.delete('/jobs/:id', (req, res) => {

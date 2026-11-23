@@ -10,6 +10,7 @@ const state = {
   authError: '',
   jobSearch: { q: '', location: '', type: '', category: '' },
   userFilter: { role: '', q: '' },
+  messageFilter: { q: '' },
   employerJobFilter: null,
 };
 
@@ -192,6 +193,7 @@ const NAV = {
     ['admin-overview', 'Overview'],
     ['admin-users', 'Users'],
     ['admin-jobs', 'Jobs'],
+    ['admin-messages', 'Messages'],
   ],
 };
 
@@ -1486,6 +1488,7 @@ async function renderEmployerApplications(ticket) {
 async function renderAdmin(ticket) {
   if (state.view === 'admin-users') return renderAdminUsers(ticket);
   if (state.view === 'admin-jobs') return renderAdminJobs(ticket);
+  if (state.view === 'admin-messages') return renderAdminMessages(ticket);
   return renderAdminOverview(ticket);
 }
 
@@ -1504,6 +1507,7 @@ async function renderAdminOverview(ticket) {
         <div class="actions">
           <button class="btn btn-primary" data-nav="admin-jobs">Review jobs${s.pendingJobs ? ` (${s.pendingJobs})` : ''}</button>
           <button class="btn btn-secondary" data-nav="admin-users">Manage users</button>
+          <button class="btn btn-secondary" data-nav="admin-messages">Inbox${s.contactMessages ? ` (${s.contactMessages})` : ''}</button>
         </div>
       </div>
 
@@ -1515,6 +1519,7 @@ async function renderAdminOverview(ticket) {
         <div class="stat"><div class="label">Applications</div><div class="value">${s.applications}</div></div>
         <div class="stat"><div class="label">Pending decisions</div><div class="value">${s.pendingApplications}</div></div>
         <div class="stat"><div class="label">Suspended accounts</div><div class="value">${s.suspendedUsers}</div></div>
+        <div class="stat"><div class="label">Contact messages</div><div class="value">${s.contactMessages}</div></div>
       </div>
 
       <div class="panel">
@@ -1686,6 +1691,72 @@ async function renderAdminJobs(ticket) {
   `;
 }
 
+async function renderAdminMessages(ticket) {
+  const params = new URLSearchParams(Object.entries(state.messageFilter).filter(([, v]) => v));
+  const data = await api(`/api/admin/messages?${params}`);
+  if (ticket !== renderTicket) return;
+  const { q } = state.messageFilter;
+
+  appEl().innerHTML = `
+    <div class="stack">
+      <div class="page-head">
+        <div>
+          <h1>Contact messages</h1>
+          <p>Everything sent through the public contact form. Reply by email, then delete the message.</p>
+        </div>
+        <button class="btn btn-secondary" data-nav="admin-overview">Back to overview</button>
+      </div>
+
+      <form class="searchbar" data-form="message-search">
+        <div class="field">
+          <label for="message-q">Search</label>
+          <input id="message-q" name="q" value="${esc(q)}" placeholder="Name, email, topic or text" />
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" type="submit">Search</button>
+        </div>
+      </form>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>${data.total} message${data.total === 1 ? '' : 's'}</h2>
+        </div>
+        <div class="table-wrap">
+          ${
+            data.messages.length
+              ? `<table>
+                  <thead><tr><th>From</th><th>Topic</th><th>Received</th><th class="actions">Actions</th></tr></thead>
+                  <tbody>
+                    ${data.messages
+                      .map(
+                        (m) => `
+                        <tr>
+                          <td><strong>${esc(m.name)}</strong><span class="sub">${esc(m.email)}</span></td>
+                          <td>${esc(m.subject)}<span class="sub">${esc(String(m.message).slice(0, 80))}${String(m.message).length > 80 ? '…' : ''}</span></td>
+                          <td class="nowrap">${fmtDate(m.created_at)}</td>
+                          <td>
+                            <div class="actions">
+                              <button class="btn btn-secondary btn-sm" data-message-view="${m.id}">Read</button>
+                              <button class="btn btn-danger btn-sm" data-delete-message="${m.id}">Delete</button>
+                            </div>
+                          </td>
+                        </tr>`
+                      )
+                      .join('')}
+                  </tbody>
+                </table>`
+              : emptyState(
+                  q ? 'No matching messages' : 'No messages yet',
+                  q ? 'Try a different search term.' : 'Messages from the contact form will appear here.'
+                )
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 /* ------------------------------------------------------------------ */
 /* Job detail modal                                                    */
 /* ------------------------------------------------------------------ */
@@ -1783,6 +1854,36 @@ async function openApplicationModal(applicationId) {
             <button class="btn btn-secondary" data-set-status="shortlisted" data-application="${application.id}" ${application.status === 'shortlisted' ? 'disabled' : ''}>Shortlist</button>
             <button class="btn btn-primary" data-set-status="selected" data-application="${application.id}" ${application.status === 'selected' ? 'disabled' : ''}>Select</button>
             <button class="btn btn-danger" data-set-status="rejected" data-application="${application.id}" ${application.status === 'rejected' ? 'disabled' : ''}>Reject</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function openMessageModal(messageId) {
+  let message;
+  try {
+    ({ message } = await api(`/api/admin/messages/${messageId}`));
+  } catch (err) {
+    toast(err.message, 'error');
+    return;
+  }
+
+  modalEl().innerHTML = `
+    <div class="modal-backdrop" data-backdrop="1">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
+        <div class="modal-head">
+          <div>
+            <h2 id="message-modal-title">${esc(message.subject)}</h2>
+            <div class="muted small">${esc(message.name)} · ${esc(message.email)} · ${fmtDate(message.created_at)}</div>
+          </div>
+          <button class="modal-close" data-action="close-modal" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="message-body">${esc(message.message)}</div>
+          <div class="actions" style="margin-top:1rem">
+            <a class="btn btn-primary btn-sm" href="mailto:${esc(message.email)}?subject=${encodeURIComponent(`Re: ${message.subject}`)}">Reply by email</a>
+            <button class="btn btn-danger btn-sm" data-delete-message="${message.id}">Delete message</button>
           </div>
         </div>
       </div>
@@ -1941,7 +2042,7 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
-  const el = target.closest('[data-nav], [data-route], [data-action], [data-demo], [data-auth-mode], [data-job], [data-toggle-job], [data-delete-job], [data-job-applicants], [data-set-status], [data-view-application], [data-download-cv], [data-toggle-user], [data-delete-user], [data-admin-toggle-job], [data-admin-moderate], [data-admin-delete-job], [data-search-q], [data-category-filter], [data-info]');
+  const el = target.closest('[data-nav], [data-route], [data-action], [data-demo], [data-auth-mode], [data-job], [data-toggle-job], [data-delete-job], [data-job-applicants], [data-set-status], [data-view-application], [data-download-cv], [data-toggle-user], [data-delete-user], [data-admin-toggle-job], [data-admin-moderate], [data-admin-delete-job], [data-message-view], [data-delete-message], [data-search-q], [data-category-filter], [data-info]');
   if (!el) return;
 
   if (el.tagName === 'A') event.preventDefault();
@@ -2172,6 +2273,24 @@ document.addEventListener('click', async (event) => {
     } catch (err) {
       toast(err.message, 'error');
     }
+    return;
+  }
+
+  if (el.dataset.messageView) {
+    await openMessageModal(el.dataset.messageView);
+    return;
+  }
+
+  if (el.dataset.deleteMessage) {
+    if (!confirm('Delete this contact message? This cannot be undone.')) return;
+    try {
+      await api(`/api/admin/messages/${el.dataset.deleteMessage}`, { method: 'DELETE' });
+      closeModal();
+      toast('Message deleted.');
+      if (state.view === 'admin-messages') render();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
   }
 });
 
@@ -2238,6 +2357,11 @@ document.addEventListener('submit', async (event) => {
 
     if (kind === 'user-search') {
       state.userFilter = { q: String(values.q || '').trim(), role: values.role || '' };
+      return render();
+    }
+
+    if (kind === 'message-search') {
+      state.messageFilter = { q: String(values.q || '').trim() };
       return render();
     }
 
