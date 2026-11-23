@@ -6,10 +6,15 @@
   "scripts": {
     "setup": "npm --prefix backend install",
     "start": "npm --prefix backend start",
-    "dev": "npm --prefix backend run dev"
+    "dev": "npm --prefix backend run dev",
+    "test": "npm --prefix backend test",
+    "lint": "eslint ."
   },
   "engines": {
     "node": ">=22.5.0"
   },
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "eslint": "^9.39.5"
+  }
 }

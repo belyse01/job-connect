@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Local environment configuration
+.env
+.env.local
+
+# Local review screenshots and captured output
+.shots/
+
+# SQLite database, uploaded CVs and other runtime data
+backend/data/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db

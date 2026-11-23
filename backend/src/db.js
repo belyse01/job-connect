@@ -3,7 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { hashPassword } = require('./security');
 
-const dataDir = path.join(__dirname, '..', 'data');
+// JC_DATA_DIR lets tests (and alternative deployments) point the database and
+// uploaded CVs somewhere other than backend/data.
+const dataDir = process.env.JC_DATA_DIR
+  ? path.resolve(process.env.JC_DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(path.join(dataDir, 'uploads'), { recursive: true });
 

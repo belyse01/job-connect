@@ -46,6 +46,17 @@ To develop with auto-reload: `npm run dev` (uses `node --watch`).
 To start over with fresh demo data, stop the server and delete `backend/data/`. It is re-seeded the next
 time the server starts.
 
+## Checks
+
+```bash
+npm test           # API tests (node:test) on a throwaway database
+npm run lint       # ESLint over backend and frontend
+```
+
+The tests boot the real Express app against a temporary SQLite directory, so they never touch
+`backend/data/`. They cover registration and session rules, suspension, job moderation, employer
+ownership checks, application review permissions, CV access and the admin contact inbox.
+
 ## Demo accounts
 
 | Role | Email | Password |

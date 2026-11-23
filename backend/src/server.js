@@ -60,6 +60,11 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`JobConnect API running at http://localhost:${PORT}`);
-});
+// Only bind a port when run directly; tests import the app and listen themselves.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`JobConnect API running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
